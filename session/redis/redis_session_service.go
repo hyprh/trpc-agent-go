@@ -392,6 +392,14 @@ func (s *Service) AppendEvent(
 	event *event.Event,
 	opts ...session.Option,
 ) error {
+	fmt.Println("AppendEvent", sess.ID, sess.AppName, sess.UserID)
+
+	// Print context deadline if exists
+	if deadline, ok := ctx.Deadline(); ok {
+		fmt.Printf("For test log Context deadline: %v\n", deadline)
+	} else {
+		fmt.Println("For test log Context has no deadline")
+	}
 	key := session.Key{
 		AppName:   sess.AppName,
 		UserID:    sess.UserID,
