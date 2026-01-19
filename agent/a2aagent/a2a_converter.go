@@ -123,8 +123,13 @@ func (d *defaultA2AEventConverter) ConvertStreamingToEvents(
 	case *protocol.Task:
 		responseMsg = convertTaskToMessage(v)
 	case *protocol.TaskStatusUpdateEvent:
-		responseMsg = convertTaskStatusToMessage(v)
+		// Skip TaskStatusUpdateEvent, do not convert to event
+		return nil, nil
 	case *protocol.TaskArtifactUpdateEvent:
+		// Skip last chunk of artifact update
+		if v.LastChunk != nil && *v.LastChunk {
+			return nil, nil
+		}
 		responseMsg = convertTaskArtifactToMessage(v)
 	default:
 		log.Infof("unexpected event type: %T", result.Result)
@@ -212,6 +217,13 @@ func (d *defaultEventA2AConverter) ConvertToA2AMessage(
 	sess := invocation.Session
 	if sess != nil {
 		message.ContextID = &sess.ID
+		// Add user_id to message metadata if available
+		if sess.UserID != "" {
+			if message.Metadata == nil {
+				message.Metadata = make(map[string]any)
+			}
+			message.Metadata["user_id"] = sess.UserID
+		}
 	}
 	return &message, nil
 }
@@ -226,8 +238,17 @@ func (d *defaultA2AEventConverter) buildRespEvent(
 	// Parse A2A message parts to extract content and tool information
 	parseResult := parseA2AMessageParts(msg)
 
+	// Determine the ID to use for the response
+	// If adk_invocation_id exists in metadata, use it as the event ID
+	id := msg.MessageID
+	if msg.Metadata != nil {
+		if adkID, ok := msg.Metadata["adk_invocation_id"].(string); ok && adkID != "" {
+			id = adkID
+		}
+	}
+
 	// Create event with appropriate response structure
-	return buildEventResponse(isStreaming, msg.MessageID, parseResult, invocation, agentName)
+	return buildEventResponse(isStreaming, id, parseResult, invocation, agentName)
 }
 
 // parseResult holds the parsed information from A2A message parts
@@ -681,21 +702,6 @@ func convertTaskToMessage(task *protocol.Task) *protocol.Message {
 		ContextID: &task.ContextID,
 		Metadata:  task.Metadata,
 	}
-}
-
-// convertTaskStatusToMessage converts a TaskStatusUpdateEvent to a Message
-func convertTaskStatusToMessage(event *protocol.TaskStatusUpdateEvent) *protocol.Message {
-	msg := &protocol.Message{
-		Role:      protocol.MessageRoleAgent,
-		Kind:      protocol.KindMessage,
-		TaskID:    &event.TaskID,
-		ContextID: &event.ContextID,
-		Metadata:  event.Metadata,
-	}
-	if event.Status.Message != nil {
-		msg.MessageID = event.Status.Message.MessageID
-	}
-	return msg
 }
 
 // convertTaskArtifactToMessage converts a TaskArtifactUpdateEvent to a Message.
