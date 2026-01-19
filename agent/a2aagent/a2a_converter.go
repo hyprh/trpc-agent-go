@@ -693,13 +693,6 @@ func convertTaskStatusToMessage(event *protocol.TaskStatusUpdateEvent) *protocol
 		Metadata:  event.Metadata,
 	}
 	if event.Status.Message != nil {
-		var parts []protocol.Part
-		for _, part := range event.Status.Message.Parts {
-			if part.GetKind() != protocol.KindText {
-				parts = append(parts, part)
-			}
-		}
-		msg.Parts = parts
 		msg.MessageID = event.Status.Message.MessageID
 	}
 	return msg
