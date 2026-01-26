@@ -225,6 +225,13 @@ func (d *defaultEventA2AConverter) ConvertToA2AMessage(
 			message.Metadata["user_id"] = sess.UserID
 		}
 	}
+	// Add invocation_id to message metadata
+	if invocation.InvocationID != "" {
+		if message.Metadata == nil {
+			message.Metadata = make(map[string]any)
+		}
+		message.Metadata["invocation_id"] = invocation.InvocationID
+	}
 	return &message, nil
 }
 
