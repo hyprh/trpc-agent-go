@@ -11,6 +11,7 @@ package a2aagent
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -123,7 +124,7 @@ func (d *defaultA2AEventConverter) ConvertStreamingToEvents(
 	case *protocol.Task:
 		responseMsg = convertTaskToMessage(v)
 	case *protocol.TaskStatusUpdateEvent:
-		// Skip TaskStatusUpdateEvent, do not convert to event
+		// Skip TaskStatusUpdateEvent, use artifact-update instead which contains complete data
 		return nil, nil
 	case *protocol.TaskArtifactUpdateEvent:
 		// Skip last chunk of artifact update
@@ -239,10 +240,11 @@ func (d *defaultA2AEventConverter) buildRespEvent(
 	parseResult := parseA2AMessageParts(msg)
 
 	// Determine the ID to use for the response
-	// If adk_invocation_id exists in metadata, use it as the event ID
+	// If response_id exists in metadata, use it as the event ID
 	id := msg.MessageID
 	if msg.Metadata != nil {
-		if adkID, ok := msg.Metadata["adk_invocation_id"].(string); ok && adkID != "" {
+		log.Infof("msg.Metadata: %v", msg.Metadata)
+		if adkID, ok := msg.Metadata["adk_response_id"].(string); ok && adkID != "" {
 			id = adkID
 		}
 	}
@@ -405,8 +407,20 @@ func processFunctionCall(d *protocol.DataPart) *model.ToolCall {
 		toolCall.Function.Name = name
 	}
 
-	if args, ok := data[ia2a.ToolCallFieldArgs].(string); ok {
-		toolCall.Function.Arguments = []byte(args)
+	// Handle args which can be either a string (JSON) or a map
+	if args, ok := data[ia2a.ToolCallFieldArgs]; ok {
+		switch v := args.(type) {
+		case string:
+			toolCall.Function.Arguments = []byte(v)
+		case map[string]any:
+			if jsonBytes, err := json.Marshal(v); err == nil {
+				toolCall.Function.Arguments = jsonBytes
+			} else {
+				log.Warnf("Failed to marshal tool call arguments: %v", err)
+			}
+		default:
+			log.Warnf("Tool call arguments has unexpected type: %T", v)
+		}
 	}
 
 	// Validate that we have at least a name
@@ -543,7 +557,7 @@ func buildStreamingResponse(messageID string, result *parseResult) *model.Respon
 		return &model.Response{
 			ID:        messageID,
 			Choices:   choices,
-			Object:    model.ObjectTypeChatCompletion,
+			Object:    model.ObjectTypeToolResponse,
 			Timestamp: now,
 			Created:   now.Unix(),
 			IsPartial: false,
@@ -667,7 +681,16 @@ func buildNonStreamingResponse(messageID string, result *parseResult) *model.Res
 
 	objectType := extractObjectType(result)
 	if objectType == "" {
-		objectType = model.ObjectTypeChatCompletion
+		if len(result.toolResponses) > 0 &&
+			len(result.toolCalls) == 0 &&
+			result.textContent == "" &&
+			result.reasoningContent == "" &&
+			result.codeExecution == "" &&
+			result.codeExecutionResult == "" {
+			objectType = model.ObjectTypeToolResponse
+		} else {
+			objectType = model.ObjectTypeChatCompletion
+		}
 	}
 
 	return &model.Response{
@@ -702,6 +725,27 @@ func convertTaskToMessage(task *protocol.Task) *protocol.Message {
 		ContextID: &task.ContextID,
 		Metadata:  task.Metadata,
 	}
+}
+
+// convertTaskStatusToMessage converts a TaskStatusUpdateEvent to a Message.
+func convertTaskStatusToMessage(event *protocol.TaskStatusUpdateEvent) *protocol.Message {
+	role := protocol.MessageRoleAgent
+	if event.Status.Message != nil && event.Status.Message.Role != "" {
+		role = event.Status.Message.Role
+	}
+
+	msg := &protocol.Message{
+		Role:      role,
+		Kind:      protocol.KindMessage,
+		TaskID:    &event.TaskID,
+		ContextID: &event.ContextID,
+		Metadata:  event.Metadata,
+	}
+	if event.Status.Message != nil {
+		msg.MessageID = event.Status.Message.MessageID
+		msg.Parts = event.Status.Message.Parts
+	}
+	return msg
 }
 
 // convertTaskArtifactToMessage converts a TaskArtifactUpdateEvent to a Message.
