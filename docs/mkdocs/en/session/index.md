@@ -597,6 +597,7 @@ Not all storage backends implement `TrackService`. A type assertion is required:
 | Storage Backend | Implements TrackService |
 | --- | --- |
 | Memory (inmemory) | ✅ |
+| SQLite | ✅ |
 | Redis | ✅ |
 | PostgreSQL | ✅ |
 | MySQL | ✅ |

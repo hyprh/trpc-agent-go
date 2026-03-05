@@ -610,6 +610,7 @@ type TrackService interface {
 | 存储后端 | 是否实现 TrackService |
 | --- | --- |
 | 内存存储（inmemory） | ✅ |
+| SQLite 存储 | ✅ |
 | Redis 存储 | ✅ |
 | PostgreSQL 存储 | ✅ |
 | MySQL 存储 | ✅ |
