@@ -79,6 +79,12 @@ def main():
         help="Timeout in seconds for evaluation (default: 600)",
     )
     parser.add_argument(
+        "--max-qa",
+        type=int,
+        default=None,
+        help="Maximum number of QA items to evaluate (default: all)",
+    )
+    parser.add_argument(
         "--pg-table",
         type=str,
         default=None,
@@ -139,6 +145,8 @@ def main():
         from dataset import create_dataset
         dataset = create_dataset("huggingface")
         qa_items = dataset.load_qa_items()
+        if args.max_qa is not None and len(qa_items) > args.max_qa:
+            qa_items = qa_items[:args.max_qa]
         print(f"Loaded {len(qa_items)} QA items from HuggingFace dataset")
 
         # Load documents once
