@@ -66,7 +66,7 @@ func WithCallGenerationConfigPatch(p model.GenerationConfigPatch) CallOption {
 //
 // When one of these keys is present in RunOptions.RuntimeState for the current
 // graph scope, its value overrides the checkpoint-restored value during resume.
-// Internal graph state keys are still ignored.
+// Keys filtered by the existing resume merge logic are still ignored.
 func WithCallResumeStateWhitelist(keys ...string) CallOption {
 	return func(c *callOptions) {
 		if c == nil || len(keys) == 0 {

@@ -621,7 +621,14 @@ func (e *Executor) resumeOrInitWithSaver(
 		"Resuming from checkpoint ID=%s",
 		tuple.Checkpoint.ID,
 	)
-	resumeStateWhitelist := resumeStateWhitelistFromInvocation(invocation)
+	var resumeStateWhitelist map[string]struct{}
+	if invocation != nil {
+		if callOpts := graphCallOptionsFromConfigs(
+			invocation.RunOptions.CustomAgentConfigs,
+		); callOpts != nil {
+			resumeStateWhitelist = callOpts.resumeStateWhitelist
+		}
+	}
 	restored := e.restoreStateFromCheckpoint(tuple)
 	restored = e.mergeInitialStateNonInternal(
 		restored,
@@ -694,19 +701,6 @@ func (e *Executor) restoreStateFromCheckpoint(tuple *CheckpointTuple) State {
 	return restored
 }
 
-func resumeStateWhitelistFromInvocation(
-	invocation *agent.Invocation,
-) map[string]struct{} {
-	if invocation == nil {
-		return nil
-	}
-	callOpts := graphCallOptionsFromConfigs(invocation.RunOptions.CustomAgentConfigs)
-	if callOpts == nil {
-		return nil
-	}
-	return callOpts.resumeStateWhitelist
-}
-
 // mergeInitialStateNonInternal merges caller-provided initial values that are
 // not internal (do not start with "_"). By default checkpoint-restored values
 // win, but whitelisted keys from runtime state can explicitly override the
@@ -717,7 +711,7 @@ func (e *Executor) mergeInitialStateNonInternal(
 	resumeStateWhitelist map[string]struct{},
 ) State {
 	for key, value := range initial {
-		if strings.HasPrefix(key, "_") || isInternalStateKey(key) {
+		if strings.HasPrefix(key, "_") {
 			continue
 		}
 		if _, ok := resumeStateWhitelist[key]; ok {
