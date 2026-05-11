@@ -68,8 +68,9 @@ type LLMAgent struct {
 	tools                   []tool.Tool     // All tools (user tools + framework tools)
 	userToolNames           map[string]bool // Names of tools explicitly registered
 	// via WithTools and WithToolSets.
-	codeExecutor         codeexecutor.CodeExecutor
-	planner              planner.Planner
+	codeExecutor      codeexecutor.CodeExecutor
+	workspaceRegistry *codeexecutor.WorkspaceRegistry
+	planner           planner.Planner
 	subAgents            []agent.Agent // Sub-agents that can be delegated to
 	agentCallbacks       *agent.Callbacks
 	outputKey            string         // Key to store output in session state
@@ -113,7 +114,7 @@ func New(name string, opts ...Option) *LLMAgent {
 
 	// Register tools from both tools and toolsets, including knowledge search tool if provided.
 	// Also track which tools are user-registered (via WithTools) for filtering purposes.
-	tools, userToolNames := registerTools(&options)
+	tools, userToolNames, wsReg := registerTools(&options, nil)
 
 	// Initialize models map and determine the initial model.
 	initialModel, models := initializeModels(&options)
@@ -132,6 +133,7 @@ func New(name string, opts ...Option) *LLMAgent {
 		),
 		genConfig:            options.GenerationConfig,
 		codeExecutor:         options.codeExecutor,
+		workspaceRegistry:    wsReg,
 		tools:                tools,
 		userToolNames:        userToolNames,
 		planner:              options.Planner,
@@ -607,7 +609,10 @@ func initializeModels(options *Options) (model.Model, map[string]model.Model) {
 	return nil, models
 }
 
-func registerTools(options *Options) ([]tool.Tool, map[string]bool) {
+func registerTools(
+	options *Options,
+	existingReg *codeexecutor.WorkspaceRegistry,
+) ([]tool.Tool, map[string]bool, *codeexecutor.WorkspaceRegistry) {
 	userToolNames := collectUserToolNames(options.Tools)
 	allTools := append([]tool.Tool(nil), options.Tools...)
 	allTools, userToolNames = appendStaticToolSetTools(
@@ -615,14 +620,16 @@ func registerTools(options *Options) ([]tool.Tool, map[string]bool) {
 	)
 	allTools = appendKnowledgeTools(allTools, options)
 	var runTool *toolskill.RunTool
-	var workspaceRegistry *codeexecutor.WorkspaceRegistry
+	workspaceRegistry := existingReg
 	if options.skillsRepository != nil {
-		if options.codeExecutor != nil {
+		if options.codeExecutor != nil && workspaceRegistry == nil {
 			workspaceRegistry = buildWorkspaceRegistry()
 		}
 		runTool = buildSkillRunTool(options, workspaceRegistry)
 	} else if executorSupportsWorkspaceExec(options) {
-		workspaceRegistry = buildWorkspaceRegistry()
+		if workspaceRegistry == nil {
+			workspaceRegistry = buildWorkspaceRegistry()
+		}
 	}
 	allTools = appendWorkspaceExecTool(
 		allTools,
@@ -631,7 +638,7 @@ func registerTools(options *Options) ([]tool.Tool, map[string]bool) {
 		nil,
 	)
 	allTools = appendSkillTools(allTools, options, runTool)
-	return allTools, userToolNames
+	return allTools, userToolNames, workspaceRegistry
 }
 
 func collectUserToolNames(tools []tool.Tool) map[string]bool {
@@ -930,6 +937,19 @@ func appendWorkspaceExecToolWithExecutor(
 
 func buildWorkspaceRegistry() *codeexecutor.WorkspaceRegistry {
 	return codeexecutor.NewWorkspaceRegistry()
+}
+
+// ensureWorkspaceRegistry returns the agent-level registry, creating
+// one if it does not yet exist. The registry is stored on the agent so
+// that successive invocations (different rounds) reuse the same
+// instance and do not create duplicate workspace directories.
+func (a *LLMAgent) ensureWorkspaceRegistry() *codeexecutor.WorkspaceRegistry {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.workspaceRegistry == nil {
+		a.workspaceRegistry = codeexecutor.NewWorkspaceRegistry()
+	}
+	return a.workspaceRegistry
 }
 
 // workspacePrepOptions translates llmagent-level workspace options
@@ -1689,9 +1709,14 @@ func (a *LLMAgent) SetSubAgents(subAgents []agent.Agent) {
 // refreshToolsLocked recomputes the aggregated tool list and user tool
 // tracking map from the current options. Caller must hold a.mu.Lock.
 func (a *LLMAgent) refreshToolsLocked() {
-	tools, userToolNames := registerTools(&a.option)
+	tools, userToolNames, reg := registerTools(
+		&a.option, a.workspaceRegistry,
+	)
 	a.tools = tools
 	a.userToolNames = userToolNames
+	if a.workspaceRegistry == nil {
+		a.workspaceRegistry = reg
+	}
 }
 
 // AddToolSet adds or replaces a tool set at runtime in a
