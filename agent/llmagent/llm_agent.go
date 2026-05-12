@@ -68,9 +68,9 @@ type LLMAgent struct {
 	tools                   []tool.Tool     // All tools (user tools + framework tools)
 	userToolNames           map[string]bool // Names of tools explicitly registered
 	// via WithTools and WithToolSets.
-	codeExecutor      codeexecutor.CodeExecutor
-	workspaceRegistry *codeexecutor.WorkspaceRegistry
-	planner           planner.Planner
+	codeExecutor         codeexecutor.CodeExecutor
+	workspaceRegistry    *codeexecutor.WorkspaceRegistry
+	planner              planner.Planner
 	subAgents            []agent.Agent // Sub-agents that can be delegated to
 	agentCallbacks       *agent.Callbacks
 	outputKey            string         // Key to store output in session state
