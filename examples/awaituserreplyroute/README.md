@@ -18,7 +18,7 @@ agents so the routing behavior is deterministic.
 7. User says `5`.
 8. Runner should resume directly into `game_issue_diagnosis` again.
 
-## Run
+## Run Fixed Version
 
 ```bash
 cd examples
@@ -32,10 +32,21 @@ after turn 2 pending_route agent=game_issue_diagnosis lookup_path=HealthHelperCS
 OK: Turn 3 resumed game_issue_diagnosis directly.
 ```
 
-Without the fix, Turn 2 drops the sub-agent segment:
+## Run Pre-Fix Version
+
+`beforefix` is a standalone module. Its `go.mod` pins
+`trpc.group/trpc-go/trpc-agent-go` to the PR base commit, so it does not use the
+local `replace => ../..` fixed source.
+
+```bash
+cd examples/awaituserreplyroute/beforefix
+go run .
+```
+
+Without the fix, Turn 2 drops the sub-agent segment from `lookup_path`:
 
 ```text
-after turn 2 pending_route agent=HealthHelperCS lookup_path=HealthHelperCS
+after turn 2 pending_route agent=game_issue_diagnosis lookup_path=HealthHelperCS
 ```
 
 Then Turn 3 is routed to `HealthHelperCS` instead of

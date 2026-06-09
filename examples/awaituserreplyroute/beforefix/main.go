@@ -7,8 +7,8 @@
 //
 //
 
-// Package main reproduces repeated await_user_reply routing for a transferred
-// sub-agent without requiring a real model provider.
+// Package main runs the same await_user_reply route reproduction against the
+// pre-fix trpc-agent-go version pinned in this directory's go.mod.
 package main
 
 import (
@@ -40,8 +40,8 @@ func main() {
 
 	ctx := context.Background()
 	sessionService := sessioninmemory.NewSessionService()
-	diagnosis := &diagnosisAgent{name: diagnosisName}
-	coordinator := &coordinatorAgent{
+	diagnosis := &demoAgent{name: diagnosisName, childMode: true}
+	coordinator := &demoAgent{
 		name:  coordinatorName,
 		child: diagnosis,
 	}
@@ -76,18 +76,20 @@ func main() {
 
 	if coordinator.calls != 1 {
 		log.Fatalf(
-			"unexpected coordinator calls: got %d, want 1. Turn 3 was routed to the coordinator.",
+			"pre-fix behavior reproduced: coordinator_calls=%d diagnosis_calls=%d. Turn 3 was routed to the coordinator.",
 			coordinator.calls,
+			diagnosis.calls,
 		)
 	}
 	if diagnosis.calls != 3 {
 		log.Fatalf(
-			"unexpected diagnosis calls: got %d, want 3. Turn 3 did not resume the sub-agent.",
+			"pre-fix behavior reproduced: coordinator_calls=%d diagnosis_calls=%d. Turn 3 did not resume the sub-agent.",
+			coordinator.calls,
 			diagnosis.calls,
 		)
 	}
 	fmt.Printf(
-		"\nOK: Turn 3 resumed %s directly. coordinator_calls=%d diagnosis_calls=%d\n",
+		"\nUnexpected pass: Turn 3 resumed %s directly. coordinator_calls=%d diagnosis_calls=%d\n",
 		diagnosisName,
 		coordinator.calls,
 		diagnosis.calls,
@@ -105,7 +107,7 @@ func runTurn(
 		userID,
 		sessionID,
 		model.NewUserMessage(input),
-		agent.WithRequestID(fmt.Sprintf("await-user-reply-route-turn-%d", turn)),
+		agent.WithRequestID(fmt.Sprintf("await-user-reply-route-beforefix-turn-%d", turn)),
 	)
 	if err != nil {
 		return err
@@ -160,32 +162,36 @@ func responseContent(rsp *model.Response) string {
 	return ""
 }
 
-type coordinatorAgent struct {
-	name  string
-	child *diagnosisAgent
-	calls int
+type demoAgent struct {
+	name      string
+	child     *demoAgent
+	childMode bool
+	calls     int
 }
 
-func (a *coordinatorAgent) Info() agent.Info {
+func (a *demoAgent) Info() agent.Info {
 	return agent.Info{Name: a.name}
 }
 
-func (a *coordinatorAgent) SubAgents() []agent.Agent {
+func (a *demoAgent) SubAgents() []agent.Agent {
+	if a.child == nil {
+		return nil
+	}
 	return []agent.Agent{a.child}
 }
 
-func (a *coordinatorAgent) FindSubAgent(name string) agent.Agent {
+func (a *demoAgent) FindSubAgent(name string) agent.Agent {
 	if a.child != nil && a.child.Info().Name == name {
 		return a.child
 	}
 	return nil
 }
 
-func (a *coordinatorAgent) Tools() []tool.Tool {
+func (a *demoAgent) Tools() []tool.Tool {
 	return nil
 }
 
-func (a *coordinatorAgent) Run(
+func (a *demoAgent) Run(
 	ctx context.Context,
 	inv *agent.Invocation,
 ) (<-chan *event.Event, error) {
@@ -193,6 +199,10 @@ func (a *coordinatorAgent) Run(
 	ch := make(chan *event.Event, 4)
 	go func() {
 		defer close(ch)
+		if a.childMode {
+			a.runDiagnosis(ctx, inv, ch)
+			return
+		}
 		if strings.Contains(inv.Message.Content, "无法玩游戏") {
 			childInv := inv.Clone(agent.WithInvocationAgent(a.child))
 			childCh, err := a.child.Run(ctx, childInv)
@@ -216,47 +226,21 @@ func (a *coordinatorAgent) Run(
 	return ch, nil
 }
 
-type diagnosisAgent struct {
-	name  string
-	calls int
-}
-
-func (a *diagnosisAgent) Info() agent.Info {
-	return agent.Info{Name: a.name}
-}
-
-func (a *diagnosisAgent) SubAgents() []agent.Agent {
-	return nil
-}
-
-func (a *diagnosisAgent) FindSubAgent(string) agent.Agent {
-	return nil
-}
-
-func (a *diagnosisAgent) Tools() []tool.Tool {
-	return nil
-}
-
-func (a *diagnosisAgent) Run(
+func (a *demoAgent) runDiagnosis(
 	ctx context.Context,
 	inv *agent.Invocation,
-) (<-chan *event.Event, error) {
-	a.calls++
-	ch := make(chan *event.Event, 1)
-	go func() {
-		defer close(ch)
-		switch a.calls {
-		case 1:
-			_ = agent.MarkAwaitingUserReply(inv)
-			emitFinal(ctx, inv, ch, a.name, "请确认是否当前账号")
-		case 2:
-			_ = agent.MarkAwaitingUserReply(inv)
-			emitFinal(ctx, inv, ch, a.name, "请选择问题类型: 1 2 3 4 5")
-		default:
-			emitFinal(ctx, inv, ch, a.name, "sub-agent received option 5")
-		}
-	}()
-	return ch, nil
+	ch chan<- *event.Event,
+) {
+	switch a.calls {
+	case 1:
+		_ = agent.MarkAwaitingUserReply(inv)
+		emitFinal(ctx, inv, ch, a.name, "请确认是否当前账号")
+	case 2:
+		_ = agent.MarkAwaitingUserReply(inv)
+		emitFinal(ctx, inv, ch, a.name, "请选择问题类型: 1 2 3 4 5")
+	default:
+		emitFinal(ctx, inv, ch, a.name, "sub-agent received option 5")
+	}
 }
 
 func emitFinal(
