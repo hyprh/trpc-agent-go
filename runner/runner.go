@@ -480,7 +480,7 @@ func (r *runner) Run(
 		return nil, err
 	}
 
-	ro, awaitUserReplyRootName, err := r.applyAwaitUserReplyRoute(
+	ro, awaitUserReplyRootName, awaitUserReplyLookupPath, err := r.applyAwaitUserReplyRoute(
 		execCtx,
 		sessionKey,
 		sess,
@@ -515,7 +515,7 @@ func (r *runner) Run(
 		eventFilterKey = ro.EventFilterKey
 	}
 
-	invocation := agent.NewInvocation(
+	invocationOpts := []agent.InvocationOptions{
 		agent.WithInvocationSession(sess),
 		agent.WithInvocationSessionService(r.sessionService),
 		agent.WithInvocationMessage(invocationMessage),
@@ -527,7 +527,14 @@ func (r *runner) Run(
 		agent.WithInvocationArtifactService(r.artifactService),
 		agent.WithInvocationEventFilterKey(eventFilterKey),
 		agent.WithInvocationPlugins(r.pluginManager),
-	)
+	}
+	if awaitUserReplyLookupPath != "" {
+		invocationOpts = append(
+			invocationOpts,
+			agent.WithInvocationBranch(awaitUserReplyLookupPath),
+		)
+	}
+	invocation := agent.NewInvocation(invocationOpts...)
 	if rootLookupName := r.selectedRootLookupName(
 		ro,
 		awaitUserReplyRootName,
