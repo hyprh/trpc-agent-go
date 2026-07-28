@@ -70,6 +70,36 @@ func TestTiktokenCounter_CountTokens(t *testing.T) {
 	require.Greater(t, used, 0)
 }
 
+func TestTiktokenCounter_CountText(t *testing.T) {
+	counter := &Counter{encoding: &mockCodec{}}
+
+	used, err := counter.CountText("plain text")
+
+	require.NoError(t, err)
+	require.Equal(t, len("plain text"), used)
+}
+
+func TestTiktokenCounter_CountTextWithTokenizer(t *testing.T) {
+	counter, err := New("gpt-4o")
+	if err != nil {
+		t.Skip("tiktoken-go not available: ", err)
+	}
+
+	used, err := counter.CountText("English and 中文")
+
+	require.NoError(t, err)
+	require.Greater(t, used, 0)
+}
+
+func TestTiktokenCounter_CountTextError(t *testing.T) {
+	counter := &Counter{encoding: &mockCodec{shouldFail: true}}
+
+	used, err := counter.CountText("plain text")
+
+	require.ErrorContains(t, err, "count text tokens failed")
+	require.Zero(t, used)
+}
+
 func TestTiktokenCounter_ModelFallback(t *testing.T) {
 	counter, err := New("unknown-model-name-xyz")
 	if err != nil {

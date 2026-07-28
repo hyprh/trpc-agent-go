@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 	"trpc.group/trpc-go/trpc-agent-go/knowledge/document"
@@ -168,6 +169,37 @@ func TestReadDocuments(t *testing.T) {
 		for _, d := range docs {
 			if sz, ok := d.Metadata[source.MetaChunkSize].(int); ok && sz > chunkSize {
 				t.Fatalf("chunk size %d exceeds expected max %d", sz, chunkSize)
+			}
+		}
+	})
+
+	t.Run("custom-chunk-length-function", func(t *testing.T) {
+		const chunkSize = 20
+		lengthFunc := func(text string) (int, error) {
+			return 2 * utf8.RuneCountInString(text), nil
+		}
+		src := New(
+			[]string{input},
+			WithChunkSize(chunkSize),
+			WithChunkLengthFunc(lengthFunc),
+		)
+
+		docs, err := src.ReadDocuments(ctx)
+
+		if err != nil {
+			t.Fatalf("ReadDocuments returned error: %v", err)
+		}
+		if len(docs) <= 1 {
+			t.Fatalf("expected multiple chunks, got %d", len(docs))
+		}
+		for i, doc := range docs {
+			size, err := lengthFunc(doc.Content)
+			if err != nil {
+				t.Fatalf("length function returned error: %v", err)
+			}
+			if size > chunkSize {
+				t.Fatalf("chunk %d size %d exceeds expected max %d",
+					i, size, chunkSize)
 			}
 		}
 	})
