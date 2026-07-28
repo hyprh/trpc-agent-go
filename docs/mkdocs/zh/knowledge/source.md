@@ -246,9 +246,9 @@ Reader，让它注册到 Reader registry。
 
 | 参数 | 默认值 | 说明 |
 |-----|-------|------|
-| ChunkSize | 1024 | FixedSizeChunking、RecursiveChunking、MarkdownChunking 的最大 Unicode rune 数 |
+| ChunkSize | 1024 | FixedSizeChunking、RecursiveChunking、MarkdownChunking 的最大 Unicode rune 数；配置长度函数后使用该函数的计量单位 |
 | JSON ChunkSize | 2000 | JSONChunking 序列化后的最大字节数 |
-| Overlap | 0 | 相邻分块之间的最大 Unicode rune 数 |
+| Overlap | 0 | 相邻分块之间的最大 Unicode rune 数；配置长度函数后使用该函数的计量单位 |
 
 > `overlap` 仅对 FixedSizeChunking、RecursiveChunking、MarkdownChunking 生效。它表示上限：策略可以把 overlap 起点移动到自然边界，也可以缩小实际 overlap，以保证最终分块不超过 `chunkSize`。较大的 overlap 会压缩新正文的空间，因此产生更多 chunk。JSONChunking 不支持 overlap。
 
@@ -278,11 +278,51 @@ fileSrc := filesource.New(
 )
 ```
 
+### 按 Token 限制分块预算
+
+FixedSizeChunking、RecursiveChunking 和 MarkdownChunking 支持使用自定义长度
+函数代替 Unicode rune 计数。推荐在 Source 上配置，这样 Reader 仍会根据
+文档格式选择默认策略。例如 Markdown 文件仍使用 MarkdownChunking，并保留
+标题路径：
+
+```go
+import (
+    tiktoken "trpc.group/trpc-go/trpc-agent-go/model/tiktoken"
+    filesource "trpc.group/trpc-go/trpc-agent-go/knowledge/source/file"
+)
+
+counter, err := tiktoken.New("gpt-4o")
+if err != nil {
+    return err
+}
+
+fileSrc := filesource.New(
+    []string{"./data/document.md"},
+    filesource.WithChunkSize(512),             // 最大 token 数
+    filesource.WithChunkOverlap(64),           // 最大重叠 token 数
+    filesource.WithChunkLengthFunc(counter.CountText),
+)
+```
+
+DirSource、URLSource、AutoSource 和 Reader 也提供
+`WithChunkLengthFunc`。文本策略会对包含分隔符和 overlap 的完整候选内容
+重新计数，确保最终 chunk 不超过预算。长度函数必须返回确定的非负值；函数
+返回的错误会由 `Chunk` 向上传递。
+
+为保持向后兼容，`MetaChunkSize` 和 `MetaOverlappedContentSize` 仍记录
+Unicode rune 数，不会切换为 token 数。
+
+这个 option 会作用于 Reader 默认选择的 FixedSizeChunking 和
+MarkdownChunking。JSONChunking 仍按序列化字节数限制，基于 AST 的代码
+Reader 也保持原有结构化分块语义。自定义策略会覆盖 Source 的 size、
+overlap 和长度函数配置；需要分别使用 `WithLengthFunc`、
+`WithRecursiveLengthFunc` 或 `WithMarkdownLengthFunc` 在策略内部配置。
+
 ### 自定义分块策略
 
 使用 `WithCustomChunkingStrategy` 可覆盖默认分块策略。
 
-> **注意**：自定义分块策略会完全覆盖 `WithChunkSize` 和 `WithChunkOverlap` 的配置，分块参数需在自定义策略内部设置。
+> **注意**：自定义分块策略会完全覆盖 `WithChunkSize`、`WithChunkOverlap` 和 `WithChunkLengthFunc` 的配置，分块参数需在自定义策略内部设置。
 
 #### FixedSizeChunking - 固定大小分块
 

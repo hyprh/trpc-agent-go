@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"trpc.group/trpc-go/trpc-agent-go/knowledge/document"
 	"trpc.group/trpc-go/trpc-agent-go/knowledge/extractor"
@@ -160,6 +161,41 @@ func TestReadDocuments(t *testing.T) {
 			}
 			if sz > chunkSize {
 				t.Fatalf("chunk size %d exceeds expected max %d", sz, chunkSize)
+			}
+		}
+	})
+
+	t.Run("custom-chunk-length-function", func(t *testing.T) {
+		const (
+			chunkSize = 20
+			overlap   = 4
+		)
+		lengthFunc := func(text string) (int, error) {
+			return 2 * utf8.RuneCountInString(text), nil
+		}
+		src := New(
+			[]string{filePath},
+			WithChunkSize(chunkSize),
+			WithChunkOverlap(overlap),
+			WithChunkLengthFunc(lengthFunc),
+		)
+
+		docs, err := src.ReadDocuments(ctx)
+
+		if err != nil {
+			t.Fatalf("ReadDocuments returned error: %v", err)
+		}
+		if len(docs) <= 1 {
+			t.Fatalf("expected multiple chunks, got %d", len(docs))
+		}
+		for i, doc := range docs {
+			size, err := lengthFunc(doc.Content)
+			if err != nil {
+				t.Fatalf("length function returned error: %v", err)
+			}
+			if size > chunkSize {
+				t.Fatalf("chunk %d size %d exceeds expected max %d",
+					i, size, chunkSize)
 			}
 		}
 	})

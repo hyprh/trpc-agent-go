@@ -10,6 +10,7 @@
 package chunking
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -416,5 +417,120 @@ func TestFixedSizeChunking_OverlapStartsAtWordBoundary(t *testing.T) {
 		contentRunes := []rune(chunk.Content)
 		require.True(t, actualOverlap == len(contentRunes) ||
 			contentRunes[actualOverlap] == ' ')
+	}
+}
+
+func TestFixedSizeChunking_CustomLengthFunc(t *testing.T) {
+	lengthFunc := func(text string) (int, error) {
+		return 2 * utf8.RuneCountInString(text), nil
+	}
+	const (
+		chunkSize = 8
+		overlap   = 2
+	)
+	chunker := NewFixedSizeChunking(
+		WithChunkSize(chunkSize),
+		WithOverlap(overlap),
+		WithLengthFunc(lengthFunc),
+	)
+
+	chunks, err := chunker.Chunk(&document.Document{
+		ID:      "custom-length",
+		Content: "甲乙丙丁戊己庚辛",
+	})
+
+	require.NoError(t, err)
+	require.Greater(t, len(chunks), 1)
+	for i, chunk := range chunks {
+		size, err := lengthFunc(chunk.Content)
+		require.NoError(t, err)
+		require.LessOrEqual(t, size, chunkSize,
+			"chunk %d exceeds the custom length budget", i)
+		runeCount := utf8.RuneCountInString(chunk.Content)
+		if overlappedSize, ok :=
+			chunk.Metadata[source.MetaOverlappedContentSize]; ok {
+			require.Equal(t, runeCount, overlappedSize)
+		} else {
+			require.Equal(t, runeCount,
+				chunk.Metadata[source.MetaChunkSize])
+		}
+	}
+}
+
+func TestFixedSizeChunking_CustomLengthFuncMeasuresWholeCandidate(t *testing.T) {
+	lengthFunc := func(text string) (int, error) {
+		if text == "ab" {
+			return 1, nil
+		}
+		return utf8.RuneCountInString(text), nil
+	}
+	chunker := NewFixedSizeChunking(
+		WithChunkSize(1),
+		WithLengthFunc(lengthFunc),
+	)
+
+	chunks, err := chunker.Chunk(&document.Document{
+		ID:      "whole-candidate",
+		Content: "abc",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"ab", "c"}, []string{
+		chunks[0].Content,
+		chunks[1].Content,
+	})
+}
+
+func TestFixedSizeChunking_CustomLengthFuncError(t *testing.T) {
+	wantErr := errors.New("length failed")
+	chunker := NewFixedSizeChunking(
+		WithChunkSize(4),
+		WithLengthFunc(func(string) (int, error) {
+			return 0, wantErr
+		}),
+	)
+
+	chunks, err := chunker.Chunk(&document.Document{
+		ID:      "length-error",
+		Content: "content",
+	})
+
+	require.ErrorIs(t, err, wantErr)
+	require.Nil(t, chunks)
+}
+
+func TestFixedSizeChunking_CustomLengthPreservesRecordBoundary(t *testing.T) {
+	lengthFunc := func(text string) (int, error) {
+		return utf8.RuneCountInString(text), nil
+	}
+	const (
+		chunkSize = 60
+		overlap   = 20
+	)
+	firstRecord := strings.Repeat("a", 50)
+	secondRecord := "2 | " + strings.Repeat("b", 50)
+	chunker := NewFixedSizeChunking(
+		WithChunkSize(chunkSize),
+		WithOverlap(overlap),
+		WithPreserveLines(),
+		WithLengthFunc(lengthFunc),
+	)
+
+	chunks, err := chunker.Chunk(&document.Document{
+		ID:      "custom-record-boundary",
+		Content: firstRecord + "\n" + secondRecord,
+	})
+
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(chunks), 3)
+	require.Contains(t, chunks[1].Content,
+		strings.Repeat("a", overlap-1)+"\n2 | ")
+	require.NotContains(t, chunks[1].Content,
+		strings.Repeat("a", overlap)+"2 | ")
+	for i, chunk := range chunks {
+		size, err := lengthFunc(chunk.Content)
+		require.NoError(t, err)
+		require.LessOrEqual(t, size, chunkSize,
+			"chunk %d exceeds the custom length budget", i)
 	}
 }

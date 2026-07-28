@@ -420,3 +420,94 @@ func TestRecursiveChunking_ConfigValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestRecursiveChunking_CustomLengthFunc(t *testing.T) {
+	lengthFunc := func(text string) (int, error) {
+		return 2 * utf8.RuneCountInString(text), nil
+	}
+	const (
+		chunkSize = 8
+		overlap   = 2
+	)
+	chunker := NewRecursiveChunking(
+		WithRecursiveChunkSize(chunkSize),
+		WithRecursiveOverlap(overlap),
+		WithRecursiveSeparators([]string{""}),
+		WithRecursiveLengthFunc(lengthFunc),
+	)
+
+	chunks, err := chunker.Chunk(&document.Document{
+		ID:      "custom-length",
+		Content: "甲乙丙丁戊己庚辛",
+	})
+
+	require.NoError(t, err)
+	require.Greater(t, len(chunks), 1)
+	for i, chunk := range chunks {
+		size, err := lengthFunc(chunk.Content)
+		require.NoError(t, err)
+		require.LessOrEqual(t, size, chunkSize,
+			"chunk %d exceeds the custom length budget", i)
+	}
+}
+
+func TestRecursiveChunking_CustomLengthFuncMeasuresWholeCandidate(t *testing.T) {
+	lengthFunc := func(text string) (int, error) {
+		if text == "ab" {
+			return 1, nil
+		}
+		return utf8.RuneCountInString(text), nil
+	}
+	chunker := NewRecursiveChunking(
+		WithRecursiveChunkSize(1),
+		WithRecursiveSeparators([]string{""}),
+		WithRecursiveLengthFunc(lengthFunc),
+	)
+
+	chunks, err := chunker.Chunk(&document.Document{
+		ID:      "whole-candidate",
+		Content: "abc",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"ab", "c"}, []string{
+		chunks[0].Content,
+		chunks[1].Content,
+	})
+}
+
+func TestRecursiveChunking_CustomLengthFuncError(t *testing.T) {
+	wantErr := errors.New("length failed")
+	chunker := NewRecursiveChunking(
+		WithRecursiveChunkSize(4),
+		WithRecursiveLengthFunc(func(string) (int, error) {
+			return 0, wantErr
+		}),
+	)
+
+	chunks, err := chunker.Chunk(&document.Document{
+		ID:      "length-error",
+		Content: "content",
+	})
+
+	require.ErrorIs(t, err, wantErr)
+	require.Nil(t, chunks)
+}
+
+func TestRecursiveChunking_CustomLengthRejectsIndivisibleRune(t *testing.T) {
+	chunker := NewRecursiveChunking(
+		WithRecursiveChunkSize(1),
+		WithRecursiveSeparators([]string{""}),
+		WithRecursiveLengthFunc(func(text string) (int, error) {
+			return 2 * utf8.RuneCountInString(text), nil
+		}),
+	)
+
+	chunks, err := chunker.Chunk(&document.Document{
+		ID:      "indivisible",
+		Content: "甲",
+	})
+
+	require.ErrorContains(t, err, "indivisible rune")
+	require.Nil(t, chunks)
+}

@@ -10,6 +10,7 @@
 package chunking
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -2057,4 +2058,93 @@ func TestMarkdownChunking_ReservesBudgetForExplicitOverlap(t *testing.T) {
 		require.Contains(t, chunk.Metadata,
 			source.MetaOverlappedContentSize)
 	}
+}
+
+func TestMarkdownChunking_CustomLengthFunc(t *testing.T) {
+	lengthFunc := func(text string) (int, error) {
+		return 2 * utf8.RuneCountInString(text), nil
+	}
+	const (
+		chunkSize = 80
+		overlap   = 20
+	)
+	chunker := NewMarkdownChunking(
+		WithMarkdownChunkSize(chunkSize),
+		WithMarkdownOverlap(overlap),
+		WithMarkdownLengthFunc(lengthFunc),
+	)
+	content := `# Root
+
+Root context.
+
+## Mixed
+
+English and 中文 content should keep its Markdown structure while the custom length function controls the final budget. ` +
+		strings.Repeat("More mixed content. ", 10)
+
+	chunks, err := chunker.Chunk(&document.Document{
+		ID:      "custom-markdown-length",
+		Content: content,
+	})
+
+	require.NoError(t, err)
+	require.Greater(t, len(chunks), 1)
+	var foundMixedPath bool
+	for i, chunk := range chunks {
+		size, err := lengthFunc(chunk.Content)
+		require.NoError(t, err)
+		require.LessOrEqual(t, size, chunkSize,
+			"chunk %d exceeds the custom length budget", i)
+		if chunk.Metadata[source.MetaMarkdownHeaderPath] == "Root > Mixed" {
+			foundMixedPath = true
+		}
+	}
+	require.True(t, foundMixedPath)
+}
+
+func TestMarkdownChunking_CustomLengthLargeOverlapWithinBudget(t *testing.T) {
+	lengthFunc := func(text string) (int, error) {
+		return 2 * utf8.RuneCountInString(text), nil
+	}
+	const (
+		chunkSize = 120
+		overlap   = 100
+	)
+	chunker := NewMarkdownChunking(
+		WithMarkdownChunkSize(chunkSize),
+		WithMarkdownOverlap(overlap),
+		WithMarkdownLengthFunc(lengthFunc),
+	)
+
+	chunks, err := chunker.Chunk(&document.Document{
+		ID:      "custom-large-overlap",
+		Content: strings.Repeat("token aware content ", 40),
+	})
+
+	require.NoError(t, err)
+	require.Greater(t, len(chunks), 1)
+	for i, chunk := range chunks {
+		size, err := lengthFunc(chunk.Content)
+		require.NoError(t, err)
+		require.LessOrEqual(t, size, chunkSize,
+			"chunk %d exceeds the custom length budget", i)
+	}
+}
+
+func TestMarkdownChunking_CustomLengthFuncError(t *testing.T) {
+	wantErr := errors.New("length failed")
+	chunker := NewMarkdownChunking(
+		WithMarkdownChunkSize(20),
+		WithMarkdownLengthFunc(func(string) (int, error) {
+			return 0, wantErr
+		}),
+	)
+
+	chunks, err := chunker.Chunk(&document.Document{
+		ID:      "length-error",
+		Content: "# Header\n\nContent",
+	})
+
+	require.ErrorIs(t, err, wantErr)
+	require.Nil(t, chunks)
 }
